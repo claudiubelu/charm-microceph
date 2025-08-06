@@ -21,8 +21,9 @@ import json
 import logging
 from typing import Callable
 
-from ops.charm import CharmBase, RelationEvent
-from ops.framework import EventBase, EventSource, Object, ObjectEvents
+from charms.ceph_nfs_client.v0 import ceph_nfs_client
+from ops.charm import CharmBase
+from ops.framework import EventBase, Object
 from ops_sunbeam.relation_handlers import RelationHandler
 
 import ceph
@@ -31,105 +32,6 @@ import utils
 from microceph_client import Client
 
 logger = logging.getLogger(__name__)
-
-
-class CephNfsConnectedEvent(RelationEvent):
-    """ceph-nfs connected event."""
-
-    pass
-
-
-class CephNfsDepartedEvent(RelationEvent):
-    """ceph-nfs relation has departed event."""
-
-    pass
-
-
-class CephNfsReconcileEvent(RelationEvent):
-    """ceph-nfs relation reconciliation event."""
-
-    pass
-
-
-class CephNfsEvents(ObjectEvents):
-    """Events class for `on`."""
-
-    ceph_nfs_connected = EventSource(CephNfsConnectedEvent)
-    ceph_nfs_departed = EventSource(CephNfsDepartedEvent)
-    ceph_nfs_reconcile = EventSource(CephNfsReconcileEvent)
-
-
-class CephNfsClientProvides(Object):
-    """Interface for ceph-nfs-client provider."""
-
-    on = CephNfsEvents()
-
-    def __init__(self, charm, relation_name="ceph-nfs"):
-        super().__init__(charm, relation_name)
-
-        self.charm = charm
-        self.this_unit = self.model.unit
-        self.relation_name = relation_name
-
-        # React to ceph-nfs relations.
-        self.framework.observe(
-            charm.on[self.relation_name].relation_joined, self._on_relation_changed
-        )
-        self.framework.observe(
-            charm.on[self.relation_name].relation_changed, self._on_relation_changed
-        )
-        self.framework.observe(
-            charm.on[self.relation_name].relation_departed, self._on_relation_departed
-        )
-
-        # React to ceph peers relations.
-        self.framework.observe(charm.on["peers"].relation_departed, self._on_ceph_peers)
-        self.framework.observe(charm.on["peers"].relation_changed, self._on_ceph_peers)
-
-    def _on_relation_changed(self, event):
-        """Prepare relation for data from requiring side."""
-        if not self.model.unit.is_leader():
-            return
-
-        logger.info("_on_relation_changed event")
-
-        if not self.charm.ready_for_service():
-            logger.info("Not processing request as service is not yet ready")
-            event.defer()
-            return
-
-        if ceph.get_osd_count() == 0:
-            logger.info("Storage not available, deferring event.")
-            event.defer()
-            return
-
-        self.on.ceph_nfs_connected.emit(event.relation)
-
-    def _on_relation_departed(self, event):
-        """Cleanup relation after departure."""
-        if not self.model.unit.is_leader() or event.relation.app == self.charm.app:
-            return
-
-        logger.info("_on_relation_departed event")
-        self.on.ceph_nfs_departed.emit(event.relation)
-
-    def _on_ceph_peers(self, event):
-        """Handle ceph peers relation events."""
-        # Mon addrs might have changed, update the relation data.
-        # Additionally, new nodes may have been added, which could be added to
-        # NFS clusters.
-        if not self.model.unit.is_leader():
-            return
-
-        mon_key = "mon-hosts"
-        addrs = utils.get_mon_addresses()
-
-        for relation in self.framework.model.relations[self.relation_name]:
-            relation.data[self.model.app][mon_key] = json.dumps(addrs)
-
-            # New nodes may have been added, add them to NFS clusters as
-            # needed.
-            self.on.ceph_nfs_reconcile.emit(relation)
 
 
 class CephNfsProviderHandler(RelationHandler):
@@ -147,7 +49,7 @@ class CephNfsProviderHandler(RelationHandler):
         """Configure event handlers for an ceph-nfs-client interface."""
         logger.debug("Setting up ceph-nfs-client event handler")
 
-        ceph_nfs = CephNfsClientProvides(
+        ceph_nfs = ceph_nfs_client.CephNfsClientProvides(
             self.charm,
             self.relation_name,
         )
@@ -170,6 +72,11 @@ class CephNfsProviderHandler(RelationHandler):
 
     def _on_ceph_nfs_connected(self, event: EventBase) -> None:
         if not self.model.unit.is_leader():
+            return
+
+        if ceph.get_osd_count() == 0:
+            logger.info("Storage not available, deferring event.")
+            event.defer()
             return
 
         logger.info("Processing ceph-nfs connected")

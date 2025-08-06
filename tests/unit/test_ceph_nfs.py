@@ -127,8 +127,7 @@ class TestCephNfsClientProvides(testbase.TestBaseCharm):
 
         self.add_ceph_nfs_relation(self.harness)
 
-        # _on_relation_changed is called on relation join and changed events.
-        self.get_osd_count.assert_has_calls([call()] * 2)
+        self.get_osd_count.assert_called_once()
 
     def test_ensure_nfs_cluster(self):
         # No nodes.
