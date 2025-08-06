@@ -114,7 +114,7 @@ class CephNfsRequiresEvents(ObjectEvents):
     ceph_nfs_departed = EventSource(CephNfsDepartedEvent)
 
 
-class CephNfsClientProvides(Object):
+class CephNfsProvides(Object):
     """Interface for ceph-nfs-client provider."""
 
     on = CephNfsProvidesEvents()
